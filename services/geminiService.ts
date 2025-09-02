@@ -2,11 +2,19 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { Pose } from '../types';
 
-if (!process.env.API_KEY) {
-    throw new Error("API_KEY environment variable not set");
+// Lazily initialize to avoid a hard crash if the API key is missing on load.
+let ai: GoogleGenAI | null = null;
+
+function getAiInstance(): GoogleGenAI {
+  if (!process.env.API_KEY) {
+    throw new Error("API_KEY environment variable not set. Please configure it in your project's deployment settings.");
+  }
+  if (!ai) {
+    ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  }
+  return ai;
 }
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 const poseDetectionSchema = {
   type: Type.ARRAY,
@@ -32,7 +40,8 @@ export async function estimatePose(imageBase64: string): Promise<Pose | null> {
     const base64Data = dataUrlParts[1];
 
     try {
-        const response = await ai.models.generateContent({
+        const geminiClient = getAiInstance();
+        const response = await geminiClient.models.generateContent({
             model: "gemini-2.5-flash",
             contents: {
                 parts: [
@@ -56,6 +65,8 @@ export async function estimatePose(imageBase64: string): Promise<Pose | null> {
         return poseData;
     } catch (error) {
         console.error("Error calling Gemini API:", error);
-        throw new Error("Failed to estimate pose from the Gemini API.");
+        // Propagate the specific error message, whether it's from the key check or the API call itself.
+        const message = error instanceof Error ? error.message : "Failed to estimate pose from the Gemini API.";
+        throw new Error(message);
     }
 }
