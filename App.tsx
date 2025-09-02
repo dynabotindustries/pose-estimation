@@ -16,8 +16,8 @@ const App: React.FC = () => {
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  // FIX: Initialize useRef with null to satisfy type expectations and avoid potential errors.
   const requestRef = useRef<number | null>(null);
+  const isProcessingRef = useRef(false); // Use ref to track state without causing dependency issues
 
   const captureFrame = useCallback(() => {
     if (!videoRef.current || videoRef.current.readyState < 2) return null;
@@ -33,15 +33,21 @@ const App: React.FC = () => {
   }, []);
 
   const processPose = useCallback(async () => {
-    if (isProcessing) return;
-
-    const imageBase64 = captureFrame();
-    if (!imageBase64) {
+    // Check ref to prevent concurrent API calls
+    if (isProcessingRef.current) {
       requestRef.current = requestAnimationFrame(processPose);
       return;
     }
 
-    setIsProcessing(true);
+    const imageBase64 = captureFrame();
+    if (!imageBase64) {
+      // If frame is not ready, try again on the next animation frame
+      requestRef.current = requestAnimationFrame(processPose);
+      return;
+    }
+
+    isProcessingRef.current = true;
+    setIsProcessing(true); // Set state for UI feedback
     setError(null);
     try {
       const pose = await estimatePose(imageBase64);
@@ -49,15 +55,15 @@ const App: React.FC = () => {
     } catch (err) {
       console.error(err);
       setError(err instanceof Error ? err.message : 'An unknown error occurred.');
-      setDetectedPose(null); 
+      setDetectedPose(null);
     } finally {
+      isProcessingRef.current = false;
       setIsProcessing(false);
-      // Only request next frame if webcam is still on
-      if (isWebcamOn) {
-         requestRef.current = requestAnimationFrame(processPose);
-      }
+      // Always schedule the next frame to keep the loop alive.
+      // The loop is stopped by cancelling the animation frame request.
+      requestRef.current = requestAnimationFrame(processPose);
     }
-  }, [captureFrame, isProcessing, isWebcamOn]);
+  }, [captureFrame]);
 
   const startWebcam = async () => {
     setError(null);
@@ -75,35 +81,51 @@ const App: React.FC = () => {
     }
   };
 
-  const stopWebcam = useCallback(() => {
+  const stopWebcam = () => {
     if (stream) {
       stream.getTracks().forEach((track) => track.stop());
     }
-    // FIX: A request ID of 0 is valid but falsy. Check for null instead.
+    // Crucially, cancel the animation frame to stop the loop
     if (requestRef.current !== null) {
         cancelAnimationFrame(requestRef.current);
+        requestRef.current = null;
     }
     setStream(null);
     setIsWebcamOn(false);
+    isProcessingRef.current = false; // Reset processing ref
     setIsProcessing(false);
     setDetectedPose(null);
+  };
+
+  // Effect to handle attaching the media stream to the video element
+  useEffect(() => {
+    if (videoRef.current && stream) {
+        videoRef.current.srcObject = stream;
+        videoRef.current.play().catch(e => {
+          console.error("Video play failed:", e);
+          setError("Failed to play video. Please check browser permissions for autoplay.");
+        });
+    }
   }, [stream]);
 
+  // Effect to start and stop the pose processing loop
   useEffect(() => {
-    if (isWebcamOn && videoRef.current && stream) {
-        videoRef.current.srcObject = stream;
-        videoRef.current.onloadedmetadata = () => {
-          videoRef.current?.play();
-          requestRef.current = requestAnimationFrame(processPose);
-        };
+    if (isWebcamOn) {
+      requestRef.current = requestAnimationFrame(processPose);
+    } else {
+      if (requestRef.current !== null) {
+        cancelAnimationFrame(requestRef.current);
+        requestRef.current = null;
+      }
     }
-    
-    // Cleanup on component unmount
+
+    // Cleanup function to stop the loop if the component unmounts
     return () => {
-        stopWebcam();
+      if (requestRef.current !== null) {
+        cancelAnimationFrame(requestRef.current);
+      }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isWebcamOn, stream, processPose]);
+  }, [isWebcamOn, processPose]);
 
 
   return (
