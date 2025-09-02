@@ -1,0 +1,7 @@
+{
+  "name": "Real-time Pose Estimation",
+  "description": "A sleek, real-time pose estimation demo that uses your device's webcam. It overlays detected keypoints and a skeleton on the video feed, powered by the Gemini API.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
